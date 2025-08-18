@@ -96,41 +96,32 @@ class SynaplinkBot:
             return url
 
     async def _send_checklist(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Надёжная отправка чек-листа пользователю."""
+        """Надёжная отправка чек-листа пользователю с красивым именем файла."""
         if not getattr(Config, 'CHECKLIST_URL', None):
             logger.info("ℹ️ CHECKLIST_URL не задан — пропускаем отправку чек-листа")
             return
         chat_id = update.effective_chat.id
         url = Config.CHECKLIST_URL
         caption = "Чек-лист «5 точек роста с ИИ»"
-        # 1) Пробуем отправить как URL напрямую
-        try:
-            await context.bot.send_document(chat_id=chat_id, document=url, caption=caption)
-            logger.info("✅ Чек-лист отправлен по исходной ссылке")
-            return
-        except Exception as e:
-            logger.warning(f"Не удалось отправить документ по исходной ссылке: {e}")
-        # 2) Пробуем конвертировать Google Drive ссылку в прямую
+        # 1) Пытаемся скачать (сначала сконвертированную GDrive ссылку) и отправить как байты с нужным именем
         try:
             direct = self._gdrive_to_direct(url)
-            if direct != url:
-                await context.bot.send_document(chat_id=chat_id, document=direct, caption=caption)
-                logger.info("✅ Чек-лист отправлен по конвертированной GDrive ссылке")
-                return
-        except Exception as e:
-            logger.warning(f"Не удалось отправить документ по конвертированной ссылке: {e}")
-        # 3) Фолбэк: скачиваем и шлём байты
-        try:
-            resp = requests.get(url, timeout=30)
-            if resp.status_code == 200:
+            resp = requests.get(direct, timeout=30)
+            if resp.status_code == 200 and resp.content:
                 buf = BytesIO(resp.content)
-                buf.name = "checklist.pdf"
+                buf.name = "5 точек роста с ИИ.pdf"
                 await context.bot.send_document(chat_id=chat_id, document=buf, caption=caption)
-                logger.info("✅ Чек-лист отправлен как байты")
+                logger.info("✅ Чек-лист отправлен как байты с именем '5 точек роста с ИИ.pdf'")
                 return
-            logger.error(f"❌ Не удалось скачать чек-лист: HTTP {resp.status_code}")
+            logger.warning(f"Не удалось скачать чек-лист: HTTP {resp.status_code}")
         except Exception as e:
-            logger.error(f"❌ Ошибка при скачивании/отправке чек-листа: {e}")
+            logger.warning(f"Ошибка скачивания чек-листа: {e}")
+        # 2) Фолбэк: отправляем по прямой/исходной ссылке (имя файла может задать источник)
+        try:
+            await context.bot.send_document(chat_id=chat_id, document=self._gdrive_to_direct(url), caption=caption)
+            logger.info("✅ Чек-лист отправлен ссылкой (fallback)")
+        except Exception as e:
+            logger.error(f"❌ Не удалось отправить чек-лист ни одним способом: {e}")
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /start - показывает стартовое меню и отправляет чек-лист"""
