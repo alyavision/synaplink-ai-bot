@@ -84,6 +84,54 @@ class SynaplinkBot:
         
         logger.info("Все обработчики настроены успешно")
         
+    def _gdrive_to_direct(self, url: str) -> str:
+        """Если ссылка Google Drive вида /file/d/<id>/view, конвертируем в прямую загрузку."""
+        try:
+            match = re.search(r"drive\.google\.com/file/d/([^/]+)/", url)
+            if match:
+                file_id = match.group(1)
+                return f"https://drive.google.com/uc?export=download&id={file_id}"
+            return url
+        except Exception:
+            return url
+
+    async def _send_checklist(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Надёжная отправка чек-листа пользователю."""
+        if not getattr(Config, 'CHECKLIST_URL', None):
+            logger.info("ℹ️ CHECKLIST_URL не задан — пропускаем отправку чек-листа")
+            return
+        chat_id = update.effective_chat.id
+        url = Config.CHECKLIST_URL
+        caption = "Чек-лист «5 точек роста с ИИ»"
+        # 1) Пробуем отправить как URL напрямую
+        try:
+            await context.bot.send_document(chat_id=chat_id, document=url, caption=caption)
+            logger.info("✅ Чек-лист отправлен по исходной ссылке")
+            return
+        except Exception as e:
+            logger.warning(f"Не удалось отправить документ по исходной ссылке: {e}")
+        # 2) Пробуем конвертировать Google Drive ссылку в прямую
+        try:
+            direct = self._gdrive_to_direct(url)
+            if direct != url:
+                await context.bot.send_document(chat_id=chat_id, document=direct, caption=caption)
+                logger.info("✅ Чек-лист отправлен по конвертированной GDrive ссылке")
+                return
+        except Exception as e:
+            logger.warning(f"Не удалось отправить документ по конвертированной ссылке: {e}")
+        # 3) Фолбэк: скачиваем и шлём байты
+        try:
+            resp = requests.get(url, timeout=30)
+            if resp.status_code == 200:
+                buf = BytesIO(resp.content)
+                buf.name = "checklist.pdf"
+                await context.bot.send_document(chat_id=chat_id, document=buf, caption=caption)
+                logger.info("✅ Чек-лист отправлен как байты")
+                return
+            logger.error(f"❌ Не удалось скачать чек-лист: HTTP {resp.status_code}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка при скачивании/отправке чек-листа: {e}")
+
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /start - показывает стартовое меню и отправляет чек-лист"""
         logger.info("🚀 Команда /start вызвана!")
@@ -116,21 +164,8 @@ class SynaplinkBot:
         except Exception as e:
             logger.error(f"Ошибка при отправке приветствия: {e}")
 
-        # 3) Автосенд чек-листа (если задан URL)
-        try:
-            if getattr(Config, 'CHECKLIST_URL', None):
-                url = Config.CHECKLIST_URL
-                # Пробуем просто переслать URL как документ — Telegram скачает сам, если доступно
-                await context.bot.send_document(
-                    chat_id=update.effective_chat.id,
-                    document=url,
-                    caption="Чек-лист «5 точек роста с ИИ»"
-                )
-                logger.info("✅ Чек-лист отправлен пользователю")
-            else:
-                logger.info("ℹ️ CHECKLIST_URL не задан — пропускаем отправку чек-листа")
-        except Exception as e:
-            logger.error(f"❌ Не удалось отправить чек-лист: {e}")
+        # 3) Автосенд чек-листа (надёжный)
+        await self._send_checklist(update, context)
     
     async def _send_logo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Отправляет логотип компании"""
@@ -204,18 +239,18 @@ class SynaplinkBot:
         # Отправляем служебный стартовый сигнал ассистенту
         try:
             initial_message = "Пользователь вернулся после подписки. Начни диалог, представься и спроси имя."
-            response = self.openai_client.send_message(user_id, initial_message)
+            _ = self.openai_client.send_message(user_id, initial_message)
+            # Обновлённое приветственное сообщение без упоминания подписки
             welcome_message = (
-                f"👋 Спасибо, что подписались на наш канал! 🎉\n\n"
-                f"{response}"
+                "Сани готов помочь вам с любыми вопросами о наших услугах, технологиях и решениях. "
+                "Представьтесь пожалуйста! И расскажите что Вас интересует."
             )
             await query.edit_message_text(welcome_message, reply_markup=reply_markup)
         except Exception as e:
             logger.error(f"Ошибка при инициации диалога: {e}")
             welcome_message = (
-                "👋 Спасибо, что подписались на наш канал! 🎉\n\n"
-                "Я готов помочь вам с любыми вопросами о наших услугах, "
-                "технологиях и решениях. Представьтесь пожалуйста! И расскажите что Вас интересует."
+                "Сани готов помочь вам с любыми вопросами о наших услугах, технологиях и решениях. "
+                "Представьтесь пожалуйста! И расскажите что Вас интересует."
             )
             await query.edit_message_text(welcome_message, reply_markup=reply_markup)
     
