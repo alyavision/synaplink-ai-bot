@@ -17,3 +17,6 @@ WORKING_CHAT_ID=-1001234567890
 
 # Logo Image URL или путь к файлу
 LOGO_IMAGE_URL=https://your-logo-url.png
+
+# Checklist file URL (PDF)
+CHECKLIST_URL=https://drive.google.com/file/d/xxxx/view?usp=sharing
